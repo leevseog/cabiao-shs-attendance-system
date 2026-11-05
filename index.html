@@ -659,11 +659,11 @@
         </div>
     </div>
 
-    <!-- Firebase SDK Modules for Real-time Persistence -->
+    <!-- Firebase SDK Modules for Shared Cloud Database -->
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
         import { getAuth, signInAnonymously, signInWithCustomToken } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
-        import { getFirestore, collection, onSnapshot, addDoc, doc, setDoc, query } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+        import { getFirestore, collection, onSnapshot, doc, setDoc, addDoc } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
         const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : {
             apiKey: "demo-api-key",
@@ -689,17 +689,14 @@
                 } else {
                     await signInAnonymously(auth);
                 }
-                const statusText = document.getElementById('db-status-text');
-                if (statusText) statusText.innerText = "Cloud Sync Active";
                 setupFirestoreListeners();
             } catch (err) {
-                console.error("Auth / Persistence Error:", err);
-                const statusText = document.getElementById('db-status-text');
-                if (statusText) statusText.innerText = "Local Device Mode";
+                console.error("Auth / Database Connection Error:", err);
             }
         }
 
         function setupFirestoreListeners() {
+            // Listen to public students collection live
             const studentsCol = collection(db, 'artifacts', appId, 'public', 'data', 'students');
             onSnapshot(studentsCol, (snapshot) => {
                 const loadedStudents = [];
@@ -708,6 +705,7 @@
                 });
                 if (loadedStudents.length > 0) {
                     studentDirectory = loadedStudents;
+                    saveStudentsToLocalStorage();
                     populateSimulatorDropdown();
                     renderStudentsTable();
                     renderQRPrintGrid(document.getElementById('qr-section-selector')?.value || 'ALL');
@@ -716,6 +714,7 @@
                 console.error("Students listener error:", error);
             });
 
+            // Listen to public attendance collection live
             const attendanceCol = collection(db, 'artifacts', appId, 'public', 'data', 'attendance');
             onSnapshot(attendanceCol, (snapshot) => {
                 const loadedLogs = [];
@@ -723,10 +722,13 @@
                     loadedLogs.push({ id: doc.id, ...doc.data() });
                 });
                 loadedLogs.sort((a, b) => new Date(b.timestamp || b.date + ' ' + b.time) - new Date(a.timestamp || a.date + ' ' + a.time));
-                attendanceLogs = loadedLogs;
-                renderLiveFeed();
-                renderAttendanceTable();
-                updateDashboardMetrics();
+                if (loadedLogs.length > 0) {
+                    attendanceLogs = loadedLogs;
+                    saveAttendanceToLocalStorage();
+                    renderLiveFeed();
+                    renderAttendanceTable();
+                    updateDashboardMetrics();
+                }
             }, (error) => {
                 console.error("Attendance listener error:", error);
             });
@@ -734,27 +736,25 @@
 
         window.persistStudentToDB = async function(student) {
             try {
-                // Save to local storage immediately for GitHub Pages persistence
                 saveStudentsToLocalStorage();
                 if (db && typeof db === 'object') {
                     const docRef = doc(db, 'artifacts', appId, 'public', 'data', 'students', student.lrn);
                     await setDoc(docRef, student);
                 }
             } catch (e) {
-                console.error("Error saving student to db:", e);
+                console.error("Error saving student to cloud db:", e);
             }
         };
 
         window.persistAttendanceToDB = async function(record) {
             try {
-                // Save to local storage immediately for GitHub Pages persistence
                 saveAttendanceToLocalStorage();
                 if (db && typeof db === 'object') {
                     const attendanceCol = collection(db, 'artifacts', appId, 'public', 'data', 'attendance');
                     await addDoc(attendanceCol, record);
                 }
             } catch (e) {
-                console.error("Error saving attendance to db:", e);
+                console.error("Error saving attendance to cloud db:", e);
             }
         };
 
@@ -769,7 +769,7 @@
         let isAudioBeepEnabled = true;
         let pendingUnregisteredLRN = null;
 
-        // Local Storage Helper Functions for persistent GitHub Pages deployment
+        // Local Storage Helper Functions
         function saveStudentsToLocalStorage() {
             try {
                 localStorage.setItem('cshs_student_directory', JSON.stringify(studentDirectory));
@@ -816,8 +816,6 @@
             const minutes = nowDate.getMinutes();
             const totalMinutes = hours * 60 + minutes;
 
-            // Monday (day 1): 7:12 AM (432 minutes) or later is LATE
-            // Tuesday - Friday (days 2-5): 8:00 AM (480 minutes) or later is LATE
             if (dayOfWeek === 1) {
                 const mondayLateThreshold = 7 * 60 + 12; // 7:12 AM
                 return totalMinutes >= mondayLateThreshold ? "LATE" : "PRESENT";
@@ -1592,7 +1590,7 @@
         window.onload = function() {
             startLiveClock();
 
-            // Load saved data from browser storage when opening/refreshing the site on GitHub
+            // Load saved data from browser storage when opening/refreshing the site
             const savedStudents = loadStudentsFromLocalStorage();
             if (savedStudents && savedStudents.length > 0) {
                 studentDirectory = savedStudents;
