@@ -114,8 +114,8 @@
                     <span id="live-date" class="text-[11px] text-slate-300">Loading date...</span>
                 </div>
                 <div class="flex items-center space-x-2 bg-slate-900/80 px-3.5 py-1.5 rounded-xl border border-slate-700">
-                    <span class="inline-block w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse"></span>
-                    <span class="text-xs font-semibold text-slate-200">System Ready</span>
+                    <span id="db-status-dot" class="inline-block w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse"></span>
+                    <span id="db-status-text" class="text-xs font-semibold text-slate-200">Database Syncing...</span>
                 </div>
                 <button onclick="triggerQuickHelp()" class="text-slate-300 hover:text-white transition p-2.5 rounded-xl bg-slate-900/80 border border-slate-700" title="System Info">
                     <i class="fa-solid fa-circle-info text-lg"></i>
@@ -413,9 +413,6 @@
                         <button onclick="exportAttendanceCSV()" class="px-4 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs rounded-2xl flex items-center gap-2 shadow-md transition">
                             <i class="fa-solid fa-file-excel"></i> Export CSV
                         </button>
-                        <button onclick="promptResetAttendanceRecords()" class="px-4 py-2.5 bg-rose-50 text-rose-700 hover:bg-rose-100 font-bold text-xs rounded-2xl flex items-center gap-2 transition border border-rose-200">
-                            <i class="fa-solid fa-trash-can"></i> Reset Records
-                        </button>
                     </div>
                 </div>
 
@@ -533,7 +530,7 @@
                     <div>
                         <h2 class="text-xl font-bold text-slate-900 flex items-center gap-2">
                             <span>Dual Student & Parent FB Messenger Dispatcher</span>
-                            <span class="text-xs bg-blue-100 text-blue-800 px-2.5 py-1 rounded-full font-bold">API Active</span>
+                            <span class="text-xs bg-blue-100 text-blue-800 px-2.5 py-1 rounded-full font-bold">Live Link & Webhook Active</span>
                         </h2>
                         <p class="text-sm text-slate-500 mt-1">Automated real-time notification logs dispatched simultaneously to both student and parent upon LRN / QR campus arrival scan.</p>
                     </div>
@@ -550,6 +547,23 @@
             </section>
 
         </main>
+    </div>
+
+    <!-- Unregistered Student Modal Alert -->
+    <div id="unregistered-lrn-modal" class="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4 hidden">
+        <div class="bg-white rounded-3xl shadow-2xl max-w-md w-full p-6 border border-slate-100 text-center animate-in fade-in zoom-in-95 duration-150">
+            <div class="w-14 h-14 bg-amber-100 text-amber-600 rounded-full flex items-center justify-center mx-auto mb-4 text-2xl shadow">
+                <i class="fa-solid fa-user-xmark"></i>
+            </div>
+            <h3 class="text-lg font-bold text-slate-900">Unregistered LRN Detected</h3>
+            <p class="text-xs text-slate-500 mt-2">The scanned code <span id="unreg-lrn-display" class="font-mono font-bold text-slate-800 bg-slate-100 px-2 py-0.5 rounded"></span> is not registered in the school database.</p>
+            <p class="text-xs text-slate-400 mt-1">Self-registration during scan is disabled for security. An authorized staff member must register this student first.</p>
+            
+            <div class="flex gap-2 mt-6">
+                <button onclick="closeUnregisteredModal()" class="flex-1 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold rounded-2xl transition">Dismiss</button>
+                <button onclick="redirectToRegisterModal()" class="flex-1 py-2.5 bg-brand-600 hover:bg-brand-700 text-white text-xs font-bold rounded-2xl transition shadow-md">Register Student</button>
+            </div>
+        </div>
     </div>
 
     <!-- Add Student Modal -->
@@ -649,12 +663,154 @@
         </div>
     </div>
 
+    <!-- Firebase SDK Modules for Real-time Persistence -->
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { getAuth, signInAnonymously, signInWithCustomToken } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getFirestore, collection, onSnapshot, addDoc, doc, setDoc, query } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+
+        const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : {
+            apiKey: "demo-api-key",
+            authDomain: "demo-app.firebaseapp.com",
+            projectId: "demo-app",
+            storageBucket: "demo-app.appspot.com",
+            messagingSenderId: "123456789",
+            appId: "1:123456789:web:abcdef"
+        };
+
+        const appId = typeof __app_id !== 'undefined' ? __app_id : 'cshs-attendance-system';
+        const app = initializeApp(firebaseConfig);
+        const auth = getAuth(app);
+        const db = getFirestore(app);
+
+        window.db = db;
+        window.appId = appId;
+
+        async function initAuth() {
+            try {
+                if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+                    await signInWithCustomToken(auth, __initial_auth_token);
+                } else {
+                    await signInAnonymously(auth);
+                }
+                document.getElementById('db-status-text').innerText = "Live Database Ready";
+                setupFirestoreListeners();
+            } catch (err) {
+                console.error("Auth / Persistence Error:", err);
+                document.getElementById('db-status-text').innerText = "Local Fallback Mode";
+            }
+        }
+
+        function setupFirestoreListeners() {
+            const studentsCol = collection(db, 'artifacts', appId, 'public', 'data', 'students');
+            onSnapshot(studentsCol, (snapshot) => {
+                const loadedStudents = [];
+                snapshot.forEach(doc => {
+                    loadedStudents.push({ id: doc.id, ...doc.data() });
+                });
+                if (loadedStudents.length > 0) {
+                    studentDirectory = loadedStudents;
+                    populateSimulatorDropdown();
+                    renderStudentsTable();
+                    renderQRPrintGrid(document.getElementById('qr-section-selector')?.value || 'ALL');
+                }
+            }, (error) => {
+                console.error("Students listener error:", error);
+            });
+
+            const attendanceCol = collection(db, 'artifacts', appId, 'public', 'data', 'attendance');
+            onSnapshot(attendanceCol, (snapshot) => {
+                const loadedLogs = [];
+                snapshot.forEach(doc => {
+                    loadedLogs.push({ id: doc.id, ...doc.data() });
+                });
+                loadedLogs.sort((a, b) => new Date(b.timestamp || b.date + ' ' + b.time) - new Date(a.timestamp || a.date + ' ' + a.time));
+                attendanceLogs = loadedLogs;
+                renderLiveFeed();
+                renderAttendanceTable();
+                updateDashboardMetrics();
+            }, (error) => {
+                console.error("Attendance listener error:", error);
+            });
+        }
+
+        window.persistStudentToDB = async function(student) {
+            try {
+                // Save to local storage immediately for GitHub Pages persistence
+                saveStudentsToLocalStorage();
+                if (db && typeof db === 'object') {
+                    const docRef = doc(db, 'artifacts', appId, 'public', 'data', 'students', student.lrn);
+                    await setDoc(docRef, student);
+                }
+            } catch (e) {
+                console.error("Error saving student to db:", e);
+            }
+        };
+
+        window.persistAttendanceToDB = async function(record) {
+            try {
+                // Save to local storage immediately for GitHub Pages persistence
+                saveAttendanceToLocalStorage();
+                if (db && typeof db === 'object') {
+                    const attendanceCol = collection(db, 'artifacts', appId, 'public', 'data', 'attendance');
+                    await addDoc(attendanceCol, record);
+                }
+            } catch (e) {
+                console.error("Error saving attendance to db:", e);
+            }
+        };
+
+        initAuth();
+    </script>
+
     <script>
         let studentDirectory = [];
         let attendanceLogs = [];
         let parentNotificationLogs = [];
         let html5QrScanner = null;
         let isAudioBeepEnabled = true;
+        let pendingUnregisteredLRN = null;
+
+        // Local Storage Helper Functions for persistent GitHub Pages deployment
+        function saveStudentsToLocalStorage() {
+            try {
+                localStorage.setItem('cshs_student_directory', JSON.stringify(studentDirectory));
+            } catch (e) {
+                console.error("Error saving students to localStorage:", e);
+            }
+        }
+
+        function loadStudentsFromLocalStorage() {
+            try {
+                const stored = localStorage.getItem('cshs_student_directory');
+                if (stored) {
+                    return JSON.parse(stored);
+                }
+            } catch (e) {
+                console.error("Error loading students from localStorage:", e);
+            }
+            return null;
+        }
+
+        function saveAttendanceToLocalStorage() {
+            try {
+                localStorage.setItem('cshs_attendance_logs', JSON.stringify(attendanceLogs));
+            } catch (e) {
+                console.error("Error saving attendance logs to localStorage:", e);
+            }
+        }
+
+        function loadAttendanceFromLocalStorage() {
+            try {
+                const stored = localStorage.getItem('cshs_attendance_logs');
+                if (stored) {
+                    return JSON.parse(stored);
+                }
+            } catch (e) {
+                console.error("Error loading attendance logs from localStorage:", e);
+            }
+            return null;
+        }
 
         function calculateAttendanceStatus(nowDate = new Date()) {
             const dayOfWeek = nowDate.getDay(); // 1 = Monday, etc.
@@ -670,16 +826,6 @@
             } else {
                 const standardLateThreshold = 8 * 60; // 8:00 AM
                 return totalMinutes >= standardLateThreshold ? "LATE" : "PRESENT";
-            }
-        }
-
-        function promptResetAttendanceRecords() {
-            if (confirm("Are you sure you want to clear all attendance records?")) {
-                attendanceLogs = [];
-                renderAttendanceTable();
-                renderLiveFeed();
-                updateDashboardMetrics();
-                showToast("Records Reset", "All attendance logs cleared.", "info");
             }
         }
 
@@ -785,18 +931,14 @@
                 if (selectedDeviceId) {
                     await startScannerWithConfig({ deviceId: { exact: selectedDeviceId } });
                 } else {
-                    // Try getting available video devices first for exact deviceId matching
                     const devices = await Html5Qrcode.getCameras().catch(() => []);
                     
                     if (devices && devices.length > 0) {
-                        // Populate camera dropdown for quick selection
                         populateCameraDropdown(devices);
-                        // Prefer back/environment camera or default to first device
                         const backCamera = devices.find(d => d.label.toLowerCase().includes('back') || d.label.toLowerCase().includes('environment'));
                         const targetDeviceId = backCamera ? backCamera.id : devices[0].id;
                         await startScannerWithConfig({ deviceId: { exact: targetDeviceId } });
                     } else {
-                        // Generic constraint fallback if device enumeration is restricted
                         try {
                             await startScannerWithConfig({ facingMode: "environment" });
                         } catch (facingErr) {
@@ -871,35 +1013,33 @@
                 return;
             }
 
-            playBeep(true);
-
             let student = studentDirectory.find(s => s.lrn === cleanCode);
-
             const computedStatus = calculateAttendanceStatus(new Date());
 
             if (student) {
+                playBeep(true);
                 recordAttendance(student, computedStatus);
             } else {
-                const activeSection = document.getElementById('section-global-filter')?.value || '12-STEM 1';
-                const formattedSection = activeSection === 'ALL' ? '12-STEM 1' : activeSection;
-                const autoName = 'Student (LRN: ' + cleanCode.slice(-4) + ')';
+                playBeep(false);
+                pendingUnregisteredLRN = cleanCode;
+                document.getElementById('unreg-lrn-display').innerText = cleanCode;
+                document.getElementById('unregistered-lrn-modal').classList.remove('hidden');
+                showToast("Unregistered Code", `LRN ${cleanCode} is not registered in the school database.`, "warning");
+            }
+        }
 
-                const newStudent = {
-                    lrn: cleanCode,
-                    name: autoName,
-                    section: formattedSection,
-                    studentFb: "https://facebook.com/student.profile",
-                    parentFb: "https://facebook.com/parent.profile",
-                    parentPhone: "+63 917 " + Math.floor(100000 + Math.random() * 900000),
-                    avatar: "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=150&auto=format&fit=crop&q=80"
-                };
+        function closeUnregisteredModal() {
+            document.getElementById('unregistered-lrn-modal').classList.add('hidden');
+            pendingUnregisteredLRN = null;
+        }
 
-                studentDirectory.unshift(newStudent);
-                populateSimulatorDropdown();
-                renderStudentsTable();
-                recordAttendance(newStudent, computedStatus);
-
-                showToast("New LRN Registered!", `Detected valid 12-digit LRN. Auto-registered under ${formattedSection} and logged attendance as ${computedStatus}.`, "success");
+        function redirectToRegisterModal() {
+            const unregCode = pendingUnregisteredLRN;
+            closeUnregisteredModal();
+            switchTab('students');
+            openAddStudentModal();
+            if (unregCode) {
+                document.getElementById('new-std-lrn').value = unregCode;
             }
         }
 
@@ -922,7 +1062,7 @@
             const record = {
                 time: timeStr,
                 date: dateStr,
-                timestamp: now,
+                timestamp: now.toISOString(),
                 lrn: student.lrn,
                 name: student.name,
                 section: student.section,
@@ -934,6 +1074,10 @@
             };
 
             attendanceLogs.unshift(record);
+
+            if (window.persistAttendanceToDB) {
+                window.persistAttendanceToDB(record);
+            }
 
             updateLatestScanDisplay(student, record);
             renderLiveFeed();
@@ -997,16 +1141,28 @@
             `).join('');
         }
 
+        function formatFBMessageLink(profileUrl, messageText) {
+            if (!profileUrl) return "#";
+            const encoded = encodeURIComponent(messageText);
+            let username = profileUrl.split("facebook.com/")[1] || profileUrl.split("m.me/")[1] || "";
+            username = username.replace(/\/$/, "");
+            return username ? `https://m.me/${username}?text=${encoded}` : profileUrl;
+        }
+
         function dispatchDualNotifications(student, record) {
+            const stdMessage = `[Cabiao SHS Attendance] Hi ${student.name}! Your campus arrival scan at Cabiao Senior High School was successfully recorded at ${record.time} today (${record.date}). Have a great day!`;
+            const parentMessage = `[Cabiao SHS Attendance] Hello Parent! Your child ${student.name} (${student.section}, LRN: ${student.lrn}) has safely arrived at school campus at ${record.time}.`;
+
             const notifStudent = {
                 id: 'NOTIF-STD-' + Math.floor(1000 + Math.random() * 9000),
                 recipientType: 'Student',
                 recipientName: student.name,
                 recipientFb: student.studentFb,
+                directMessageLink: formatFBMessageLink(student.studentFb, stdMessage),
                 section: student.section,
                 time: record.time,
                 date: record.date,
-                message: `[Cabiao SHS Attendance] Hi ${student.name}! Your campus arrival scan at Cabiao Senior High School was successfully recorded at ${record.time} today (${record.date}). Have a great day!`
+                message: stdMessage
             };
 
             const notifParent = {
@@ -1014,10 +1170,11 @@
                 recipientType: 'Parent / Guardian',
                 recipientName: 'Parent of ' + student.name,
                 recipientFb: student.parentFb,
+                directMessageLink: formatFBMessageLink(student.parentFb, parentMessage),
                 section: student.section,
                 time: record.time,
                 date: record.date,
-                message: `[Cabiao SHS Attendance] Hello Parent! Your child ${student.name} (${student.section}, LRN: ${student.lrn}) has safely arrived at school campus at ${record.time}.`
+                message: parentMessage
             };
 
             parentNotificationLogs.unshift(notifStudent);
@@ -1027,7 +1184,7 @@
             const notifBadge = document.getElementById('notif-badge-count');
             notifBadge.innerText = parentNotificationLogs.length;
 
-            showToast("Dual FB Alerts Dispatched!", `Messenger notifications sent to both ${student.name} and parent.`, "fb");
+            showToast("Dual FB Alerts Dispatched!", `Messenger notifications prepared for both ${student.name} and parent.`, "fb");
         }
 
         function populateSimulatorDropdown() {
@@ -1139,6 +1296,8 @@
             };
 
             studentDirectory.unshift(newStudent);
+            if (window.persistStudentToDB) window.persistStudentToDB(newStudent);
+
             populateSimulatorDropdown();
             renderStudentsTable();
             renderQRPrintGrid(section);
@@ -1197,7 +1356,6 @@
 
         function filterAttendanceTable() {
             const searchVal = document.getElementById('attendance-search-input').value.toLowerCase();
-            const statusVal = document.getElementById('attendance-status-filter').value;
             const globalSectionVal = document.getElementById('section-global-filter').value;
 
             const rows = document.querySelectorAll('#attendance-table-body tr');
@@ -1281,8 +1439,10 @@
                     </div>
                     <p class="text-xs text-slate-700 bg-white p-3 rounded-xl border border-slate-200/60 shadow-inner">${n.message}</p>
                     <div class="flex items-center justify-between text-[11px] text-slate-400">
-                        <span>Messenger Link: <a href="${n.recipientFb}" target="_blank" class="text-blue-600 hover:underline font-medium">${n.recipientFb}</a></span>
-                        <span class="text-emerald-600 font-bold"><i class="fa-solid fa-circle-check"></i> Delivered via FB API</span>
+                        <span>Messenger Profile: <a href="${n.recipientFb}" target="_blank" class="text-blue-600 hover:underline font-medium">${n.recipientFb}</a></span>
+                        <a href="${n.directMessageLink}" target="_blank" class="text-emerald-700 font-bold bg-emerald-100 hover:bg-emerald-200 px-3 py-1 rounded-lg flex items-center gap-1 transition">
+                            <i class="fa-brands fa-facebook-messenger"></i> Open Messenger Chat
+                        </a>
                     </div>
                 </div>
             `).join('');
@@ -1322,12 +1482,14 @@
             };
 
             studentDirectory.unshift(student);
+            saveStudentsToLocalStorage();
+            if (window.persistStudentToDB) window.persistStudentToDB(student);
+
             populateSimulatorDropdown();
             renderStudentsTable();
             renderQRPrintGrid(section);
             closeAddStudentModal();
 
-            // Clear modal fields
             document.getElementById('new-std-name').value = '';
             document.getElementById('new-std-lrn').value = '';
             document.getElementById('new-student-fb').value = '';
@@ -1337,18 +1499,15 @@
             showToast("Student Registered!", `${name} added under ${section} with dual FB accounts.`, "success");
         }
 
-        function sendTestParentNotification() {
-            if (studentDirectory.length > 0) {
-                const sample = studentDirectory[0];
-                const record = {
-                    time: new Date().toLocaleTimeString(),
-                    date: new Date().toLocaleDateString(),
-                    status: "PRESENT"
-                };
-                dispatchDualNotifications(sample, record);
-            } else {
-                showToast("No Students", "Please register at least one student with an LRN first.", "warning");
+        function sanitizeCSVCell(value) {
+            if (value === null || value === undefined) return '""';
+            let str = String(value);
+            // Prevent CSV formula injection
+            if (/^[=+\-@\t\r]/.test(str)) {
+                str = "'" + str;
             }
+            str = str.replace(/"/g, '""');
+            return `"${str}"`;
         }
 
         function exportAttendanceCSV() {
@@ -1357,20 +1516,35 @@
                 return;
             }
 
-            let csvContent = "data:text/csv;charset=utf-8,Time,Date,12-Digit LRN,Student Name,Section,Status,Parent Contact\n";
+            const headers = ["Time", "Date", "12-Digit LRN", "Student Name", "Section", "Status", "Parent Contact"];
+            let csvRows = [headers.map(sanitizeCSVCell).join(",")];
+
             attendanceLogs.forEach(l => {
-                csvContent += `"${l.time}","${l.date}","${l.lrn}","${l.name}","${l.section}","${l.status}","${l.parentPhone}"\n`;
+                const row = [
+                    l.time,
+                    l.date,
+                    l.lrn,
+                    l.name,
+                    l.section,
+                    l.status,
+                    l.parentPhone
+                ];
+                csvRows.push(row.map(sanitizeCSVCell).join(","));
             });
 
-            const encodedUri = encodeURI(csvContent);
+            const csvString = csvRows.join("\n");
+            const blob = new Blob(["\uFEFF" + csvString], { type: "text/csv;charset=utf-8;" });
             const link = document.createElement("a");
-            link.setAttribute("href", encodedUri);
+            const url = URL.createObjectURL(blob);
+            
+            link.setAttribute("href", url);
             link.setAttribute("download", `Cabiao_SHS_Attendance_${new Date().toISOString().slice(0,10)}.csv`);
             document.body.appendChild(link);
             link.click();
             document.body.removeChild(link);
+            URL.revokeObjectURL(url);
 
-            showToast("CSV Exported", "Attendance sheet downloaded successfully.", "success");
+            showToast("CSV Exported", "Attendance sheet safely downloaded.", "success");
         }
 
         function triggerQuickHelp() {
@@ -1419,6 +1593,18 @@
 
         window.onload = function() {
             startLiveClock();
+
+            // Load saved data from browser storage when opening/refreshing the site on GitHub
+            const savedStudents = loadStudentsFromLocalStorage();
+            if (savedStudents && savedStudents.length > 0) {
+                studentDirectory = savedStudents;
+            }
+
+            const savedAttendance = loadAttendanceFromLocalStorage();
+            if (savedAttendance && savedAttendance.length > 0) {
+                attendanceLogs = savedAttendance;
+            }
+
             populateSimulatorDropdown();
             renderQRPrintGrid("ALL");
             renderAttendanceTable();
