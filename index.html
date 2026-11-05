@@ -113,10 +113,6 @@
                     <span id="live-time" class="font-mono font-bold text-sm text-brand-400">00:00:00 AM</span>
                     <span id="live-date" class="text-[11px] text-slate-300">Loading date...</span>
                 </div>
-                <div class="flex items-center space-x-2 bg-slate-900/80 px-3.5 py-1.5 rounded-xl border border-slate-700">
-                    <span id="db-status-dot" class="inline-block w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse"></span>
-                    <span id="db-status-text" class="text-xs font-semibold text-slate-200">Database Syncing...</span>
-                </div>
                 <button onclick="triggerQuickHelp()" class="text-slate-300 hover:text-white transition p-2.5 rounded-xl bg-slate-900/80 border border-slate-700" title="System Info">
                     <i class="fa-solid fa-circle-info text-lg"></i>
                 </button>
@@ -693,11 +689,13 @@
                 } else {
                     await signInAnonymously(auth);
                 }
-                document.getElementById('db-status-text').innerText = "Live Database Ready";
+                const statusText = document.getElementById('db-status-text');
+                if (statusText) statusText.innerText = "Cloud Sync Active";
                 setupFirestoreListeners();
             } catch (err) {
                 console.error("Auth / Persistence Error:", err);
-                document.getElementById('db-status-text').innerText = "Local Fallback Mode";
+                const statusText = document.getElementById('db-status-text');
+                if (statusText) statusText.innerText = "Local Device Mode";
             }
         }
 
